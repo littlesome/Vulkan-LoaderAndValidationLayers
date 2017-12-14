@@ -20843,6 +20843,191 @@ TEST_F(VkPositiveLayerTest, UncompressedToCompressedImageCopy) {
     m_commandBuffer->end();
 }
 
+TEST_F(VkPositiveLayerTest, ImageLayout3DSliceTo2DView) {
+    TEST_DESCRIPTION("Verify use of a 3D image slice as a 2D view, requires KHR_maintenance_1 ext");
+
+    ASSERT_NO_FATAL_FAILURE(InitFramework(myDbgFunc, m_errorMonitor));
+    if (DeviceExtensionSupported(gpu(), nullptr, VK_KHR_MAINTENANCE1_EXTENSION_NAME, VK_KHR_MAINTENANCE1_SPEC_VERSION)) {
+        m_device_extension_names.push_back(VK_KHR_MAINTENANCE1_EXTENSION_NAME);
+    } else {
+        printf("             Test requires KHR_MAINTENANCE1 extension, not found. Test skipped.\n");
+        return;
+    }
+    ASSERT_NO_FATAL_FAILURE(InitState(nullptr, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
+    ASSERT_NO_FATAL_FAILURE(InitViewport(128, 128));
+
+    const VkFormat format = VkTestFramework::GetFormat(instance(), m_device);
+
+    // 3D image source
+    VkImageCreateInfo ci = {};
+    ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ci.pNext = NULL;
+    ci.flags = VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT_KHR;
+    ci.imageType = VK_IMAGE_TYPE_3D;
+    ci.format = format;
+    ci.extent = {128, 128, 4};
+    ci.mipLevels = 1;
+    ci.arrayLayers = 1;
+    ci.samples = VK_SAMPLE_COUNT_1_BIT;
+    ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ci.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ci.queueFamilyIndexCount = 0;
+    ci.pQueueFamilyIndices = NULL;
+    ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImageObj image3D(m_device);
+    image3D.init(&ci, VK_IMAGE_LAYOUT_UNDEFINED);  // Init, no layout transition
+    ASSERT_TRUE(image3D.initialized());
+    image3D.SetLayout(VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+    //VkSubresourceLayout layout;
+    //VkImageSubresource subrsc;
+    //subrsc.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    //subrsc.mipLevel = 0;
+    //for (uint32_t i = 0; i < 4; i++) {
+    //    vkGetImageSubresourceLayout(device(), image3D.handle(), &subrsc, &layout);
+    //    subrsc.mipLevel = 0;
+    //}
+
+    // Create 2D view of depth slice 3
+    VkImageViewCreateInfo view_ci = {};
+    view_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_ci.image = image3D.handle();
+    view_ci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_ci.format = format;
+    view_ci.subresourceRange.baseMipLevel = 0;
+    view_ci.subresourceRange.levelCount = 1;
+    view_ci.subresourceRange.baseArrayLayer = 3;
+    view_ci.subresourceRange.layerCount = 1;
+    view_ci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+
+    VkImageView img_view;
+    m_errorMonitor->ExpectSuccess();
+    vkCreateImageView(m_device->device(), &view_ci, NULL, &img_view);
+    m_errorMonitor->VerifyNotFound();
+
+    InitRenderTarget(&img_view, nullptr);
+
+#if 0
+    {
+        TEST_DESCRIPTION("Use a pipeline for the wrong subpass in a render pass instance");
+        ASSERT_NO_FATAL_FAILURE(Init());
+
+        // A renderpass with two subpasses, both writing the same attachment.
+        VkAttachmentDescription attach[] = {
+            { 0, VK_FORMAT_R8G8B8A8_UNORM, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL },
+        };
+        VkAttachmentReference ref = { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+        VkSubpassDescription subpasses[] = {
+            { 0, VK_PIPELINE_BIND_POINT_GRAPHICS, 0, nullptr, 1, &ref, nullptr, nullptr, 0, nullptr },
+            { 0, VK_PIPELINE_BIND_POINT_GRAPHICS, 0, nullptr, 1, &ref, nullptr, nullptr, 0, nullptr },
+        };
+        VkSubpassDependency dep = { 0,
+            1,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_DEPENDENCY_BY_REGION_BIT };
+        VkRenderPassCreateInfo rpci = { VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO, nullptr, 0, 1, attach, 2, subpasses, 1, &dep };
+        VkRenderPass rp;
+        VkResult err = vkCreateRenderPass(m_device->device(), &rpci, nullptr, &rp);
+        ASSERT_VK_SUCCESS(err);
+
+        VkImageObj image(m_device);
+        image.InitNoLayout(32, 32, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_TILING_OPTIMAL, 0);
+        VkImageView imageView = image.targetView(VK_FORMAT_R8G8B8A8_UNORM);
+
+        VkFramebufferCreateInfo fbci = { VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO, nullptr, 0, rp, 1, &imageView, 32, 32, 1 };
+        VkFramebuffer fb;
+        err = vkCreateFramebuffer(m_device->device(), &fbci, nullptr, &fb);
+        ASSERT_VK_SUCCESS(err);
+
+        char const *vsSource =
+            "#version 450\n"
+            "void main() { gl_Position = vec4(1); }\n";
+        char const *fsSource =
+            "#version 450\n"
+            "layout(location=0) out vec4 color;\n"
+            "void main() { color = vec4(1); }\n";
+
+        VkShaderObj vs(m_device, vsSource, VK_SHADER_STAGE_VERTEX_BIT, this);
+        VkShaderObj fs(m_device, fsSource, VK_SHADER_STAGE_FRAGMENT_BIT, this);
+        VkPipelineObj pipe(m_device);
+        pipe.AddDefaultColorAttachment();
+        pipe.AddShader(&vs);
+        pipe.AddShader(&fs);
+        VkViewport view_port = {};
+        m_viewports.push_back(view_port);
+        pipe.SetViewport(m_viewports);
+        VkRect2D rect = {};
+        m_scissors.push_back(rect);
+        pipe.SetScissor(m_scissors);
+
+        const VkPipelineLayoutObj pl(m_device);
+        pipe.CreateVKPipeline(pl.handle(), rp);
+
+        m_commandBuffer->begin();
+
+        VkRenderPassBeginInfo rpbi = { VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+            nullptr,
+            rp,
+            fb,
+            { {
+                    0, 0,
+                },
+                { 32, 32 } },
+                0,
+                nullptr };
+
+        // subtest 1: bind in the wrong subpass
+        vkCmdBeginRenderPass(m_commandBuffer->handle(), &rpbi, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdNextSubpass(m_commandBuffer->handle(), VK_SUBPASS_CONTENTS_INLINE);
+        m_errorMonitor->SetDesiredFailureMsg(VK_DEBUG_REPORT_ERROR_BIT_EXT, "built for subpass 0 but used in subpass 1");
+        vkCmdBindPipeline(m_commandBuffer->handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipe.handle());
+        vkCmdDraw(m_commandBuffer->handle(), 3, 1, 0, 0);
+        m_errorMonitor->VerifyFound();
+    }
+#endif
+
+    VkShaderObj vs(m_device, bindStateVertShaderText, VK_SHADER_STAGE_VERTEX_BIT, this);
+    VkDescriptorSetObj ds_obj(m_device);
+    VkPipelineObj pipe_obj(m_device);
+    pipe_obj.AddShader(&vs);
+    VkPipelineColorBlendAttachmentState att = {};
+    att.blendEnable = VK_FALSE;
+    pipe_obj.AddColorAttachment(0, att);
+    pipe_obj.SetViewport(m_viewports);
+    pipe_obj.SetScissor(m_scissors);
+
+    // GenericDrawPreparation(m_commandBuffer, pipe_obj, ds_obj, BsoFailSelect::BsoFailNone);
+    ds_obj.CreateVKDescriptorSet(m_commandBuffer);
+    VkGraphicsPipelineCreateInfo pipe_ci;
+    pipe_obj.InitGraphicsPipelineCreateInfo(&pipe_ci);
+    pipe_ci.basePipelineHandle = VK_NULL_HANDLE;
+    pipe_ci.pDynamicState = nullptr;
+
+    VkResult err = pipe_obj.CreateVKPipeline(ds_obj.GetPipelineLayout(), renderPass(), &pipe_ci);
+    ASSERT_VK_SUCCESS(err);
+    m_commandBuffer->begin();
+    vkCmdBindPipeline(m_commandBuffer->handle(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipe_obj.handle());
+    //    m_commandBuffer->BindDescriptorSet(ds_obj);
+
+    m_errorMonitor->ExpectSuccess();
+    m_commandBuffer->BeginRenderPass(m_renderPassBeginInfo);
+    m_commandBuffer->Draw(3, 1, 0, 0);
+    m_commandBuffer->EndRenderPass();
+    m_commandBuffer->end();
+    m_commandBuffer->QueueCommandBuffer(true);
+    vkQueueWaitIdle(m_device->m_queue);
+    m_errorMonitor->VerifyNotFound();
+    /* */
+
+    vkDestroyImageView(m_device->device(), img_view, NULL);
+}
+
 TEST_F(VkPositiveLayerTest, DeleteDescriptorSetLayoutsBeforeDescriptorSets) {
     TEST_DESCRIPTION("Create DSLayouts and DescriptorSets and then delete the DSLayouts before the DescriptorSets.");
     ASSERT_NO_FATAL_FAILURE(Init());
