@@ -350,6 +350,8 @@ struct demo {
     bool prepared;
     bool use_staging_buffer;
     bool separate_present_queue;
+    bool is_minimized;
+    bool is_cleaned;
 
     bool VK_KHR_incremental_present_enabled;
 
@@ -1175,6 +1177,13 @@ static void demo_prepare_buffers(struct demo *demo) {
         demo->height = surfCapabilities.currentExtent.height;
     }
 
+    if (demo->width == 0 || demo->height == 0) {
+        demo->is_minimized = true;
+        return;
+    } else {
+        demo->is_minimized = false;
+    }
+
     // The FIFO present mode is guaranteed by the spec to be supported
     // and to have no tearing.  It's a great default present mode to use.
     VkPresentModeKHR swapchainPresentMode = VK_PRESENT_MODE_FIFO_KHR;
@@ -1280,8 +1289,7 @@ static void demo_prepare_buffers(struct demo *demo) {
         .clipped = true,
     };
     uint32_t i;
-    err = demo->fpCreateSwapchainKHR(demo->device, &swapchain_ci, NULL,
-                                     &demo->swapchain);
+    err = demo->fpCreateSwapchainKHR(demo->device, &swapchain_ci, NULL, &demo->swapchain);
     assert(!err);
 
     // If we just re-created an existing swapchain, we should destroy the old
@@ -1293,19 +1301,19 @@ static void demo_prepare_buffers(struct demo *demo) {
     }
 
     err = demo->fpGetSwapchainImagesKHR(demo->device, demo->swapchain,
-                                        &demo->swapchainImageCount, NULL);
+        &demo->swapchainImageCount, NULL);
     assert(!err);
 
     VkImage *swapchainImages =
         (VkImage *)malloc(demo->swapchainImageCount * sizeof(VkImage));
     assert(swapchainImages);
     err = demo->fpGetSwapchainImagesKHR(demo->device, demo->swapchain,
-                                        &demo->swapchainImageCount,
-                                        swapchainImages);
+        &demo->swapchainImageCount,
+        swapchainImages);
     assert(!err);
 
     demo->swapchain_image_resources = (SwapchainImageResources *)malloc(sizeof(SwapchainImageResources) *
-                                               demo->swapchainImageCount);
+        demo->swapchainImageCount);
     assert(demo->swapchain_image_resources);
 
     for (i = 0; i < demo->swapchainImageCount; i++) {
@@ -1315,16 +1323,16 @@ static void demo_prepare_buffers(struct demo *demo) {
             .format = demo->format,
             .components =
                 {
-                 .r = VK_COMPONENT_SWIZZLE_R,
-                 .g = VK_COMPONENT_SWIZZLE_G,
-                 .b = VK_COMPONENT_SWIZZLE_B,
-                 .a = VK_COMPONENT_SWIZZLE_A,
+                    .r = VK_COMPONENT_SWIZZLE_R,
+                    .g = VK_COMPONENT_SWIZZLE_G,
+                    .b = VK_COMPONENT_SWIZZLE_B,
+                    .a = VK_COMPONENT_SWIZZLE_A,
                 },
             .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                 .baseMipLevel = 0,
-                                 .levelCount = 1,
-                                 .baseArrayLayer = 0,
-                                 .layerCount = 1},
+                                    .baseMipLevel = 0,
+                                    .levelCount = 1,
+                                    .baseArrayLayer = 0,
+                                    .layerCount = 1},
             .viewType = VK_IMAGE_VIEW_TYPE_2D,
             .flags = 0,
         };
@@ -1334,15 +1342,15 @@ static void demo_prepare_buffers(struct demo *demo) {
         color_image_view.image = demo->swapchain_image_resources[i].image;
 
         err = vkCreateImageView(demo->device, &color_image_view, NULL,
-                                &demo->swapchain_image_resources[i].view);
+            &demo->swapchain_image_resources[i].view);
         assert(!err);
     }
 
     if (demo->VK_GOOGLE_display_timing_enabled) {
         VkRefreshCycleDurationGOOGLE rc_dur;
         err = demo->fpGetRefreshCycleDurationGOOGLE(demo->device,
-                                                    demo->swapchain,
-                                                    &rc_dur);
+            demo->swapchain,
+            &rc_dur);
         assert(!err);
         demo->refresh_duration = rc_dur.refreshDuration;
 
@@ -1353,6 +1361,7 @@ static void demo_prepare_buffers(struct demo *demo) {
         demo->prev_desired_present_time = 0;
         demo->next_present_id = 1;
     }
+
 
     if (NULL != presentModes) {
         free(presentModes);
@@ -2175,17 +2184,19 @@ static void demo_prepare_framebuffers(struct demo *demo) {
 }
 
 static void demo_prepare(struct demo *demo) {
+
     VkResult U_ASSERT_ONLY err;
 
-    const VkCommandPoolCreateInfo cmd_pool_info = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .pNext = NULL,
-        .queueFamilyIndex = demo->graphics_queue_family_index,
-        .flags = 0,
-    };
-    err = vkCreateCommandPool(demo->device, &cmd_pool_info, NULL,
-                              &demo->cmd_pool);
-    assert(!err);
+    if (demo->cmd_pool == VK_NULL_HANDLE) {
+        const VkCommandPoolCreateInfo cmd_pool_info = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .pNext = NULL,
+            .queueFamilyIndex = demo->graphics_queue_family_index,
+            .flags = 0,
+        };
+        err = vkCreateCommandPool(demo->device, &cmd_pool_info, NULL, &demo->cmd_pool);
+        assert(!err);
+    }
 
     const VkCommandBufferAllocateInfo cmd = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -2206,6 +2217,12 @@ static void demo_prepare(struct demo *demo) {
     assert(!err);
 
     demo_prepare_buffers(demo);
+
+    if (demo->is_minimized) {
+        demo->prepared = false;
+        return;
+    }
+
     demo_prepare_depth(demo);
     demo_prepare_textures(demo);
     demo_prepare_cube_data_buffers(demo);
@@ -2266,6 +2283,7 @@ static void demo_prepare(struct demo *demo) {
 
     demo->current_buffer = 0;
     demo->prepared = true;
+    demo->is_cleaned = false;
 }
 
 static void demo_cleanup(struct demo *demo) {
@@ -2285,42 +2303,43 @@ static void demo_cleanup(struct demo *demo) {
         }
     }
 
-    for (i = 0; i < demo->swapchainImageCount; i++) {
-        vkDestroyFramebuffer(demo->device, demo->swapchain_image_resources[i].framebuffer, NULL);
-    }
-    vkDestroyDescriptorPool(demo->device, demo->desc_pool, NULL);
+    if (!demo->is_cleaned) {
+        for (i = 0; i < demo->swapchainImageCount; i++) {
+            vkDestroyFramebuffer(demo->device, demo->swapchain_image_resources[i].framebuffer, NULL);
+        }
+        vkDestroyDescriptorPool(demo->device, demo->desc_pool, NULL);
 
-    vkDestroyPipeline(demo->device, demo->pipeline, NULL);
-    vkDestroyPipelineCache(demo->device, demo->pipelineCache, NULL);
-    vkDestroyRenderPass(demo->device, demo->render_pass, NULL);
-    vkDestroyPipelineLayout(demo->device, demo->pipeline_layout, NULL);
-    vkDestroyDescriptorSetLayout(demo->device, demo->desc_layout, NULL);
+        vkDestroyPipeline(demo->device, demo->pipeline, NULL);
+        vkDestroyPipelineCache(demo->device, demo->pipelineCache, NULL);
+        vkDestroyRenderPass(demo->device, demo->render_pass, NULL);
+        vkDestroyPipelineLayout(demo->device, demo->pipeline_layout, NULL);
+        vkDestroyDescriptorSetLayout(demo->device, demo->desc_layout, NULL);
 
-    for (i = 0; i < DEMO_TEXTURE_COUNT; i++) {
-        vkDestroyImageView(demo->device, demo->textures[i].view, NULL);
-        vkDestroyImage(demo->device, demo->textures[i].image, NULL);
-        vkFreeMemory(demo->device, demo->textures[i].mem, NULL);
-        vkDestroySampler(demo->device, demo->textures[i].sampler, NULL);
-    }
-    demo->fpDestroySwapchainKHR(demo->device, demo->swapchain, NULL);
+        for (i = 0; i < DEMO_TEXTURE_COUNT; i++) {
+            vkDestroyImageView(demo->device, demo->textures[i].view, NULL);
+            vkDestroyImage(demo->device, demo->textures[i].image, NULL);
+            vkFreeMemory(demo->device, demo->textures[i].mem, NULL);
+            vkDestroySampler(demo->device, demo->textures[i].sampler, NULL);
+        }
+        demo->fpDestroySwapchainKHR(demo->device, demo->swapchain, NULL);
 
-    vkDestroyImageView(demo->device, demo->depth.view, NULL);
-    vkDestroyImage(demo->device, demo->depth.image, NULL);
-    vkFreeMemory(demo->device, demo->depth.mem, NULL);
+        vkDestroyImageView(demo->device, demo->depth.view, NULL);
+        vkDestroyImage(demo->device, demo->depth.image, NULL);
+        vkFreeMemory(demo->device, demo->depth.mem, NULL);
 
-    for (i = 0; i < demo->swapchainImageCount; i++) {
-        vkDestroyImageView(demo->device, demo->swapchain_image_resources[i].view, NULL);
-        vkFreeCommandBuffers(demo->device, demo->cmd_pool, 1,
-                             &demo->swapchain_image_resources[i].cmd);
-        vkDestroyBuffer(demo->device, demo->swapchain_image_resources[i].uniform_buffer, NULL);
-        vkFreeMemory(demo->device, demo->swapchain_image_resources[i].uniform_memory, NULL);
-    }
-    free(demo->swapchain_image_resources);
-    free(demo->queue_props);
-    vkDestroyCommandPool(demo->device, demo->cmd_pool, NULL);
+        for (i = 0; i < demo->swapchainImageCount; i++) {
+            vkDestroyImageView(demo->device, demo->swapchain_image_resources[i].view, NULL);
+            vkFreeCommandBuffers(demo->device, demo->cmd_pool, 1, &demo->swapchain_image_resources[i].cmd);
+            vkDestroyBuffer(demo->device, demo->swapchain_image_resources[i].uniform_buffer, NULL);
+            vkFreeMemory(demo->device, demo->swapchain_image_resources[i].uniform_memory, NULL);
+        }
+        free(demo->swapchain_image_resources);
+        free(demo->queue_props);
+        vkDestroyCommandPool(demo->device, demo->cmd_pool, NULL);
 
-    if (demo->separate_present_queue) {
-        vkDestroyCommandPool(demo->device, demo->present_cmd_pool, NULL);
+        if (demo->separate_present_queue) {
+            vkDestroyCommandPool(demo->device, demo->present_cmd_pool, NULL);
+        }
     }
     vkDeviceWaitIdle(demo->device);
     vkDestroyDevice(demo->device, NULL);
@@ -2357,6 +2376,9 @@ static void demo_resize(struct demo *demo) {
 
     // Don't react to resize until after first initialization.
     if (!demo->prepared) {
+        if (demo->is_minimized) {
+            demo_prepare(demo);
+        }
         return;
     }
     // In order to properly resize the window, we must re-create the swapchain
@@ -2390,12 +2412,12 @@ static void demo_resize(struct demo *demo) {
 
     for (i = 0; i < demo->swapchainImageCount; i++) {
         vkDestroyImageView(demo->device, demo->swapchain_image_resources[i].view, NULL);
-        vkFreeCommandBuffers(demo->device, demo->cmd_pool, 1,
-                             &demo->swapchain_image_resources[i].cmd);
+        vkFreeCommandBuffers(demo->device, demo->cmd_pool, 1, &demo->swapchain_image_resources[i].cmd);
         vkDestroyBuffer(demo->device, demo->swapchain_image_resources[i].uniform_buffer, NULL);
         vkFreeMemory(demo->device, demo->swapchain_image_resources[i].uniform_memory, NULL);
     }
     vkDestroyCommandPool(demo->device, demo->cmd_pool, NULL);
+    demo->cmd_pool = VK_NULL_HANDLE;
     if (demo->separate_present_queue) {
         vkDestroyCommandPool(demo->device, demo->present_cmd_pool, NULL);
     }
@@ -2403,6 +2425,7 @@ static void demo_resize(struct demo *demo) {
 
     // Second, re-perform the demo_prepare() function, which will re-create the
     // swapchain:
+    demo->is_cleaned = true;
     demo_prepare(demo);
 }
 
@@ -2948,6 +2971,9 @@ static void demo_init_vk(struct demo *demo) {
     char **instance_validation_layers = NULL;
     demo->enabled_extension_count = 0;
     demo->enabled_layer_count = 0;
+    demo->is_minimized = false;
+    demo->is_cleaned = false;
+    demo->cmd_pool = VK_NULL_HANDLE;
 
     char *instance_validation_layers_alt1[] = {
         "VK_LAYER_LUNARG_standard_validation"
