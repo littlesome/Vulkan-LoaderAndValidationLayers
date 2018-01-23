@@ -84,8 +84,8 @@ class VkRenderFramework : public VkTestFramework {
     void InitViewport();
     void InitRenderTarget();
     void InitRenderTarget(uint32_t targets);
-    void InitRenderTarget(VkImageView *dsBinding);
-    void InitRenderTarget(uint32_t targets, VkImageView *dsBinding);
+    void InitRenderTarget(const VkImageView *colorBinding, const VkImageView *dsBinding);
+    void InitRenderTarget(uint32_t targets, const VkImageView *colorBindings, const VkImageView *dsBinding);
     void InitFramework(PFN_vkDebugReportCallbackEXT = NULL, void *userData = NULL);
 
     void ShutdownFramework();
@@ -243,7 +243,7 @@ class VkImageObj : public vk_testing::Image {
               VkImageTiling const tiling = VK_IMAGE_TILING_LINEAR, VkMemoryPropertyFlags const reqs = 0,
               const std::vector<uint32_t> *queue_families = nullptr);
 
-    void init(const VkImageCreateInfo *create_info);
+    void init(const VkImageCreateInfo *create_info, VkImageLayout transition_layout = VK_IMAGE_LAYOUT_GENERAL);
 
     void InitNoLayout(uint32_t const width, uint32_t const height, uint32_t const mipLevels, VkFormat const format,
                       VkFlags const usage, VkImageTiling tiling = VK_IMAGE_TILING_LINEAR, VkMemoryPropertyFlags reqs = 0,

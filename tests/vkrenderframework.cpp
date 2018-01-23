@@ -340,14 +340,15 @@ void VkRenderFramework::InitViewport(float width, float height) {
 void VkRenderFramework::InitViewport() { InitViewport(m_width, m_height); }
 void VkRenderFramework::InitRenderTarget() { InitRenderTarget(1); }
 
-void VkRenderFramework::InitRenderTarget(uint32_t targets) { InitRenderTarget(targets, NULL); }
+void VkRenderFramework::InitRenderTarget(uint32_t targets) { InitRenderTarget(targets, nullptr, nullptr); }
 
-void VkRenderFramework::InitRenderTarget(VkImageView *dsBinding) { InitRenderTarget(1, dsBinding); }
+void VkRenderFramework::InitRenderTarget(const VkImageView *colorBinding, const VkImageView *dsBinding) { InitRenderTarget(1, colorBinding, dsBinding); }
 
-void VkRenderFramework::InitRenderTarget(uint32_t targets, VkImageView *dsBinding) {
+void VkRenderFramework::InitRenderTarget(uint32_t targets, const VkImageView *colorBindings, const VkImageView *dsBinding) {
     std::vector<VkAttachmentDescription> attachments;
     std::vector<VkAttachmentReference> color_references;
     std::vector<VkImageView> bindings;
+    ASSERT_TRUE(targets > 0);
     attachments.reserve(targets + 1);  // +1 for dsBinding
     color_references.reserve(targets);
     bindings.reserve(targets + 1);  // +1 for dsBinding
@@ -377,26 +378,35 @@ void VkRenderFramework::InitRenderTarget(uint32_t targets, VkImageView *dsBindin
 
         m_renderPassClearValues.push_back(clear);
 
-        VkImageObj *img = new VkImageObj(m_device);
-
-        VkFormatProperties props;
-
-        vkGetPhysicalDeviceFormatProperties(m_device->phy().handle(), m_render_target_fmt, &props);
-
-        if (props.linearTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) {
-            img->Init((uint32_t)m_width, (uint32_t)m_height, 1, m_render_target_fmt,
-                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                      VK_IMAGE_TILING_LINEAR);
-        } else if (props.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) {
-            img->Init((uint32_t)m_width, (uint32_t)m_height, 1, m_render_target_fmt,
-                      VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                      VK_IMAGE_TILING_OPTIMAL);
-        } else {
-            FAIL() << "Neither Linear nor Optimal allowed for render target";
+        if (nullptr != colorBindings)
+        {
+            bindings.push_back(colorBindings[i]);
         }
+        else 
+        {
+            VkImageObj *img = new VkImageObj(m_device);
 
-        m_renderTargets.push_back(img);
-        bindings.push_back(img->targetView(m_render_target_fmt));
+            VkFormatProperties props;
+
+            vkGetPhysicalDeviceFormatProperties(m_device->phy().handle(), m_render_target_fmt, &props);
+
+            if (props.linearTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) {
+                img->Init((uint32_t)m_width, (uint32_t)m_height, 1, m_render_target_fmt,
+                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                    VK_IMAGE_TILING_LINEAR);
+            }
+            else if (props.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) {
+                img->Init((uint32_t)m_width, (uint32_t)m_height, 1, m_render_target_fmt,
+                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                    VK_IMAGE_TILING_OPTIMAL);
+            }
+            else {
+                FAIL() << "Neither Linear nor Optimal allowed for render target";
+            }
+
+            m_renderTargets.push_back(img);
+            bindings.push_back(img->targetView(m_render_target_fmt));
+        }
     }
 
     VkSubpassDescription subpass = {};
@@ -412,7 +422,6 @@ void VkRenderFramework::InitRenderTarget(uint32_t targets, VkImageView *dsBindin
     if (dsBinding) {
         att.format = m_depth_stencil_fmt;
         att.loadOp = (m_clear_via_load_op) ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-        ;
         att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         att.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -932,7 +941,7 @@ void VkImageObj::Init(uint32_t const width, uint32_t const height, uint32_t cons
     SetLayout(image_aspect, newLayout);
 }
 
-void VkImageObj::init(const VkImageCreateInfo *create_info) {
+void VkImageObj::init(const VkImageCreateInfo *create_info, VkImageLayout transition_layout) {
     VkFormatProperties image_fmt;
     vkGetPhysicalDeviceFormatProperties(m_device->phy().handle(), create_info->format, &image_fmt);
 
@@ -956,17 +965,19 @@ void VkImageObj::init(const VkImageCreateInfo *create_info) {
 
     vk_testing::Image::init(*m_device, *create_info, 0);
 
-    VkImageAspectFlags image_aspect = 0;
-    if (FormatIsDepthAndStencil(create_info->format)) {
-        image_aspect = VK_IMAGE_ASPECT_STENCIL_BIT | VK_IMAGE_ASPECT_DEPTH_BIT;
-    } else if (FormatIsDepthOnly(create_info->format)) {
-        image_aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
-    } else if (FormatIsStencilOnly(create_info->format)) {
-        image_aspect = VK_IMAGE_ASPECT_STENCIL_BIT;
-    } else {  // color
-        image_aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+    if (transition_layout != create_info->initialLayout) {
+        VkImageAspectFlags image_aspect = 0;
+        if (FormatIsDepthAndStencil(create_info->format)) {
+            image_aspect = VK_IMAGE_ASPECT_STENCIL_BIT | VK_IMAGE_ASPECT_DEPTH_BIT;
+        } else if (FormatIsDepthOnly(create_info->format)) {
+            image_aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+        } else if (FormatIsStencilOnly(create_info->format)) {
+            image_aspect = VK_IMAGE_ASPECT_STENCIL_BIT;
+        } else {  // color
+            image_aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+        }
+        SetLayout(image_aspect, transition_layout);
     }
-    SetLayout(image_aspect, VK_IMAGE_LAYOUT_GENERAL);
 }
 
 VkResult VkImageObj::CopyImage(VkImageObj &src_image) {

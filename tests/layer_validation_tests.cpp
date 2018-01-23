@@ -615,7 +615,7 @@ void VkLayerTest::VKTriangleTest(BsoFailSelect failCase) {
         depth_attachment = m_depthStencil->BindInfo();
     }
 
-    ASSERT_NO_FATAL_FAILURE(InitRenderTarget(1, depth_attachment));
+    ASSERT_NO_FATAL_FAILURE(InitRenderTarget(static_cast<VkImageView *>(nullptr), depth_attachment));
     m_commandBuffer->begin();
 
     GenericDrawPreparation(m_commandBuffer, pipelineobj, descriptorSet, failCase);
@@ -25997,7 +25997,7 @@ TEST_F(VkPositiveLayerTest, CreateGraphicsPipelineWithIgnoredPointers) {
 
     m_depthStencil->Init(m_device, static_cast<int32_t>(m_width), static_cast<int32_t>(m_height), m_depth_stencil_fmt);
 
-    ASSERT_NO_FATAL_FAILURE(InitRenderTarget(m_depthStencil->BindInfo()));
+    ASSERT_NO_FATAL_FAILURE(InitRenderTarget(static_cast<VkImageView *>(nullptr), m_depthStencil->BindInfo()));
 
     const uint64_t fake_address_64 = 0xCDCDCDCDCDCDCDCD;
     const uint64_t fake_address_32 = 0xCDCDCDCD;
